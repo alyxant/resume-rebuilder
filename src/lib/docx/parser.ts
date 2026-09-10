@@ -14,9 +14,14 @@ export async function parseDocx(buffer: Buffer): Promise<DocxArchive> {
     throw new Error("Invalid DOCX: missing word/document.xml");
   }
   const rawDocumentXml = await documentFile.async("string");
+  // explicitChildren populates `$$` with every child in document order, which
+  // is what lets the extractor walk paragraphs and tables interleaved. Without
+  // it, `w:p` and `w:tbl` arrive as separate arrays and their relative order —
+  // and therefore which section a table's content belongs to — is lost.
   const documentXml = await parseStringPromise(rawDocumentXml, {
     explicitArray: true,
     preserveChildrenOrder: true,
+    explicitChildren: true,
     xmlns: false,
   });
   return { zip, documentXml, rawDocumentXml };
@@ -34,10 +39,10 @@ export async function assembleDocx(
   let xml = archive.rawDocumentXml;
 
   for (const [original, replacement] of textReplacements) {
-    // Escape for XML text content
-    const escapedReplacement = escapeXml(replacement);
-    // Replace the exact original text within <w:t> elements
-    xml = replaceTextInXml(xml, original, escapedReplacement);
+    // Pass the raw text through. Matching happens against unescaped paragraph
+    // content, and buildWtTag escapes once on the way back into the XML —
+    // pre-escaping here would double-encode "&" into a literal "&amp;".
+    xml = replaceTextInXml(xml, original, replacement);
   }
 
   archive.zip.file("word/document.xml", xml);
@@ -113,9 +118,10 @@ function extractPlainTextFromParagraph(paraXml: string): string {
 
 /**
  * Replace searchText within a paragraph's <w:t> elements.
- * If the text is in a single <w:t>, replace directly.
- * If split across runs, put the replacement in the first matching run
- * and empty subsequent runs that were part of the match.
+ *
+ * If the text lives in a single <w:t>, replace it directly. If it spans runs,
+ * the replacement is confined to the runs that actually changed, so per-run
+ * formatting (bold labels, italic titles) survives the edit.
  */
 function replacePlainTextInParagraph(
   paraXml: string,
@@ -159,27 +165,76 @@ function replacePlainTextInParagraph(
     for (let endIdx = startIdx; endIdx < textNodes.length; endIdx++) {
       accumulated += textNodes[endIdx].content;
       if (accumulated.includes(searchText)) {
-        // Found it across runs startIdx..endIdx
-        // Put replacement in first run, empty the rest
+        // Found it across runs startIdx..endIdx. Each run carries its own
+        // formatting, so collapsing them all into the first run would repaint
+        // the whole line in that run's style — turning "Skills: a, b, c" fully
+        // bold because the "Skills:" label happens to be bold. Instead, only
+        // the runs overlapping the genuinely changed span are rewritten;
+        // untouched leading and trailing text stays in its original run.
+        const spanNodes = textNodes.slice(startIdx, endIdx + 1);
+        const before = spanNodes.map((n) => n.content).join("");
+        const after = before.replace(searchText, replacementText);
+
+        let prefix = 0;
+        while (
+          prefix < before.length &&
+          prefix < after.length &&
+          before[prefix] === after[prefix]
+        ) {
+          prefix++;
+        }
+
+        let suffix = 0;
+        while (
+          suffix < before.length - prefix &&
+          suffix < after.length - prefix &&
+          before[before.length - 1 - suffix] === after[after.length - 1 - suffix]
+        ) {
+          suffix++;
+        }
+
+        const changedStart = prefix;
+        const changedEnd = before.length - suffix;
+        const middle = after.slice(prefix, after.length - suffix);
+
+        // Offsets of each run within the concatenated span.
+        const offsets: number[] = [];
+        let running = 0;
+        for (const node of spanNodes) {
+          offsets.push(running);
+          running += node.content.length;
+        }
+
+        const overlaps = (i: number) =>
+          offsets[i] < changedEnd &&
+          offsets[i] + spanNodes[i].content.length > changedStart;
+
+        const firstOverlap = spanNodes.findIndex((_, i) => overlaps(i));
+
         let result = paraXml;
-        // Process in reverse to maintain positions
+        // Rewrite in reverse so earlier offsets stay valid.
         for (let j = endIdx; j >= startIdx; j--) {
+          const i = j - startIdx;
+          if (!overlaps(i)) continue; // Untouched run keeps its own formatting.
+
           const node = textNodes[j];
-          let newContent: string;
-          if (j === startIdx) {
-            // First run: rebuild with replaced text
-            const before = textNodes
-              .slice(startIdx, endIdx + 1)
-              .map((n) => n.content)
-              .join("");
-            newContent = before.replace(searchText, replacementText);
-          } else {
-            // Subsequent runs: empty them
-            newContent = "";
-          }
-          const newTag = buildWtTag(newContent);
+          const offset = offsets[i];
+          const content = node.content;
+
+          const keptHead =
+            offset < changedStart ? content.slice(0, changedStart - offset) : "";
+          const keptTail =
+            offset + content.length > changedEnd
+              ? content.slice(Math.max(0, changedEnd - offset))
+              : "";
+
+          const newContent =
+            i === firstOverlap ? keptHead + middle + keptTail : keptHead + keptTail;
+
           result =
-            result.slice(0, node.start) + newTag + result.slice(node.end);
+            result.slice(0, node.start) +
+            buildWtTag(newContent) +
+            result.slice(node.end);
         }
         return result;
       }

@@ -1,36 +1,54 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Resume Rebuilder
 
-## Getting Started
+Resume Rebuilder is a private, local Next.js app that tailors a DOCX résumé to a job description, checks ATS keyword coverage, preserves the original document layout, and exports a PDF.
 
-First, run the development server:
+## Windows setup
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+Install these first:
+
+- [Node.js 20.9 or newer](https://nodejs.org/)
+- [LibreOffice](https://www.libreoffice.org/download/download-libreoffice/) for DOCX-to-PDF export
+- Git, if you are cloning from GitHub
+
+Open PowerShell in the project folder and run:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\scripts\setup-windows.ps1
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open `.env.local`, replace the placeholder `GEMINI_API_KEY`, then start the app:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```powershell
+.\scripts\start-windows.ps1
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Open [http://localhost:3000](http://localhost:3000). The app stores the selected base résumé locally in `.base-resume/`; generated application data and ATS caches also remain on your PC and are excluded from Git.
 
-## Learn More
+LibreOffice is detected automatically from its standard Windows install folder or from `PATH`. For a custom installation, set its executable path in `.env.local`:
 
-To learn more about Next.js, take a look at the following resources:
+```dotenv
+LIBREOFFICE_PATH=C:\Program Files\LibreOffice\program\soffice.exe
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Manual setup
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+The app also runs on macOS and Linux:
 
-## Deploy on Vercel
+```bash
+npm install
+cp .env.example .env.local
+npm run dev
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Set `AI_PROVIDER=gemini` with `GEMINI_API_KEY`, or set `AI_PROVIDER=anthropic` with `ANTHROPIC_API_KEY`. Keep `.env.local` private because it contains credentials.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Checks and production mode
+
+```bash
+npm run lint
+npm run build
+npm start
+```
+
+Production mode serves the app at [http://localhost:3000](http://localhost:3000) after a successful build.

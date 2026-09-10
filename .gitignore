@@ -30,8 +30,9 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
+# env files (keep secrets local; commit only the safe template)
 .env*
+!.env.example
 
 # vercel
 .vercel
@@ -39,3 +40,12 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# saved base resume (personal data)
+/.base-resume/
+
+# ATS requirement extraction cache
+/.ats-cache/
+
+# generated resumes, request payloads, and job application data
+/applications/

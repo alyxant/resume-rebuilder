@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { TailorResult, TailoredSection } from "@/lib/docx/types";
+import type { ExportReport } from "@/lib/ats/types";
+import CoveragePanel from "./CoveragePanel";
 import {
   Check,
   X,
@@ -14,11 +16,17 @@ import {
 
 type Props = {
   result: TailorResult;
+  exportReport: ExportReport | null;
   onExport: (sections: TailoredSection[]) => void;
   onStartOver: () => void;
 };
 
-export default function TailorView({ result, onExport, onStartOver }: Props) {
+export default function TailorView({
+  result,
+  exportReport,
+  onExport,
+  onStartOver,
+}: Props) {
   // Track which sections are accepted (all accepted by default)
   const [accepted, setAccepted] = useState<Record<string, boolean>>(() => {
     const initial: Record<string, boolean> = {};
@@ -66,86 +74,23 @@ export default function TailorView({ result, onExport, onStartOver }: Props) {
 
   return (
     <div className="space-y-6">
-      {/* Header with ATS Score */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {/* ATS Score Before */}
-        <div className="bg-white border border-border rounded-xl p-5">
-          <p className="text-sm text-muted mb-1">ATS Score Before</p>
-          <div className="flex items-end gap-2">
-            <span className="text-3xl font-bold text-danger">
-              {result.atsScore.before}%
-            </span>
-          </div>
-        </div>
+      {/* Measured JD coverage — computed in code, not reported by the model */}
+      <CoveragePanel
+        before={result.coverageBefore}
+        projected={result.coverageProjected}
+        verified={exportReport?.verifiedCoverage}
+        droppedEdits={exportReport?.droppedEdits.length ?? 0}
+      />
 
-        {/* ATS Score After */}
-        <div className="bg-white border border-border rounded-xl p-5">
-          <p className="text-sm text-muted mb-1">ATS Score After</p>
-          <div className="flex items-end gap-2">
-            <span className="text-3xl font-bold text-success">
-              {result.atsScore.after}%
-            </span>
-            <span className="text-sm text-success mb-1">
-              +{result.atsScore.after - result.atsScore.before}
-            </span>
-          </div>
-        </div>
-
-        {/* Changes Summary */}
-        <div className="bg-white border border-border rounded-xl p-5">
-          <p className="text-sm text-muted mb-1">Changes</p>
-          <div className="flex items-end gap-2">
-            <span className="text-3xl font-bold">{totalChanges}</span>
-            <span className="text-sm text-muted mb-1">
-              across {result.sections.length} sections
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* Keywords */}
       <div className="bg-white border border-border rounded-xl p-5">
-        <div className="flex items-center gap-2 mb-3">
+        <div className="flex items-center gap-2">
           <Target className="w-4 h-4 text-primary" />
-          <h3 className="text-sm font-semibold">Keyword Analysis</h3>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <p className="text-xs text-muted mb-2 uppercase tracking-wide">
-              Matched Keywords
-            </p>
-            <div className="flex flex-wrap gap-1.5">
-              {result.atsScore.matchedKeywords.map((kw) => (
-                <span
-                  key={kw}
-                  className="text-xs px-2 py-0.5 bg-green-100 text-green-800 rounded-full"
-                >
-                  {kw}
-                </span>
-              ))}
-            </div>
-          </div>
-          <div>
-            <p className="text-xs text-muted mb-2 uppercase tracking-wide">
-              Still Missing
-            </p>
-            <div className="flex flex-wrap gap-1.5">
-              {result.atsScore.missingKeywords.length > 0 ? (
-                result.atsScore.missingKeywords.map((kw) => (
-                  <span
-                    key={kw}
-                    className="text-xs px-2 py-0.5 bg-red-100 text-red-800 rounded-full"
-                  >
-                    {kw}
-                  </span>
-                ))
-              ) : (
-                <span className="text-xs text-muted">
-                  All key terms covered!
-                </span>
-              )}
-            </div>
-          </div>
+          <h3 className="text-sm font-semibold">
+            {totalChanges} change{totalChanges === 1 ? "" : "s"} proposed
+          </h3>
+          <span className="text-sm text-muted ml-auto">
+            across {result.sections.length} sections
+          </span>
         </div>
       </div>
 

@@ -1,4 +1,4 @@
-import { TextRun, TextSection } from "./types";
+import type { TextRun, TextSection } from "./types";
 
 const SECTION_KEYWORDS = [
   "summary",
@@ -14,6 +14,8 @@ const SECTION_KEYWORDS = [
   "certifications",
   "certificates",
   "projects",
+  "leadership",
+  "additional information",
   "awards",
   "honors",
   "publications",
@@ -30,7 +32,7 @@ const SECTION_KEYWORDS = [
   "accomplishments",
 ];
 
-function detectSectionName(text: string): string | null {
+export function detectSectionName(text: string): string | null {
   const cleaned = text.trim().toLowerCase().replace(/[:\-–—]/g, "").trim();
   for (const keyword of SECTION_KEYWORDS) {
     if (cleaned === keyword || cleaned.startsWith(keyword + " ")) {
@@ -75,6 +77,35 @@ function getParagraphText(paragraph: Record<string, unknown>): string {
   return runs.map((r) => extractRunText(r as Record<string, unknown>)).join("");
 }
 
+/**
+ * Collect every paragraph in document order, descending into tables.
+ *
+ * Word resumes routinely lay out sections with tables, and a heading stranded
+ * inside one would otherwise be invisible — leaving the content that follows it
+ * attributed to the previous section.
+ */
+function collectParagraphs(
+  node: Record<string, unknown>
+): Record<string, unknown>[] {
+  const children = node["$$"] as Record<string, unknown>[] | undefined;
+  if (!Array.isArray(children)) {
+    // No ordered-children metadata: fall back to direct paragraphs only.
+    const direct = node["w:p"];
+    return Array.isArray(direct) ? (direct as Record<string, unknown>[]) : [];
+  }
+
+  const paragraphs: Record<string, unknown>[] = [];
+  for (const child of children) {
+    const name = child["#name"];
+    if (name === "w:p") {
+      paragraphs.push(child);
+    } else if (name === "w:tbl" || name === "w:tr" || name === "w:tc") {
+      paragraphs.push(...collectParagraphs(child));
+    }
+  }
+  return paragraphs;
+}
+
 export function extractTextRuns(
   documentXml: Record<string, unknown>
 ): TextRun[] {
@@ -82,8 +113,8 @@ export function extractTextRuns(
   const body = getBody(documentXml);
   if (!body) return runs;
 
-  const paragraphs = (body as Record<string, unknown[]>)["w:p"];
-  if (!paragraphs || !Array.isArray(paragraphs)) return runs;
+  const paragraphs = collectParagraphs(body);
+  if (paragraphs.length === 0) return runs;
 
   let currentSection = "Header";
 
@@ -116,6 +147,44 @@ export function extractTextRuns(
   }
 
   return runs;
+}
+
+/**
+ * Group already-flat text (a PDF's extracted lines) into the same section shape
+ * the DOCX path produces, so both formats render identically in the UI.
+ */
+export function sectionsFromPlainText(text: string): TextSection[] {
+  const lines = text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0 && !/^--\s*\d+\s+of\s+\d+\s*--$/.test(l));
+
+  const sections: TextSection[] = [];
+  let currentName = "Header";
+  let currentLines: string[] = [];
+
+  const flush = () => {
+    if (currentLines.length === 0) return;
+    sections.push({
+      sectionName: currentName,
+      runs: [],
+      fullText: currentLines.join("\n"),
+    });
+    currentLines = [];
+  };
+
+  for (const line of lines) {
+    const detected = detectSectionName(line);
+    if (detected) {
+      flush();
+      currentName = detected;
+      continue;
+    }
+    currentLines.push(line);
+  }
+  flush();
+
+  return sections;
 }
 
 export function groupRunsIntoSections(runs: TextRun[]): TextSection[] {

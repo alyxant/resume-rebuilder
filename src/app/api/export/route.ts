@@ -1,20 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
-import { parseDocx, assembleDocx } from "@/lib/docx/parser";
-import { TailoredSection } from "@/lib/docx/types";
-import { execSync } from "child_process";
-import { writeFileSync, readFileSync, unlinkSync, existsSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
-import { randomUUID } from "crypto";
+import { applyEditsLayoutSafe } from "@/lib/docx/apply-edits";
+import { sectionsFromPlainText } from "@/lib/docx/text-extractor";
+import { extractRequirements } from "@/lib/ats/requirements";
+import { scoreCoverage } from "@/lib/ats/coverage";
+import type { TailoredSection } from "@/lib/docx/types";
+import type { ExportReport } from "@/lib/ats/types";
 
 export async function POST(request: NextRequest) {
-  const tempFiles: string[] = [];
-
   try {
     const body = await request.json();
-    const { docxBase64, tailoredSections } = body as {
+    const { docxBase64, tailoredSections, jobDescription } = body as {
       docxBase64: string;
       tailoredSections: TailoredSection[];
+      jobDescription?: string;
     };
 
     if (!docxBase64 || !tailoredSections) {
@@ -24,54 +22,34 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const buffer = Buffer.from(docxBase64, "base64");
-    const archive = await parseDocx(buffer);
+    const sourceBuffer = Buffer.from(docxBase64, "base64");
+    const result = await applyEditsLayoutSafe(sourceBuffer, tailoredSections);
 
-    // Build a map of original text → tailored text for direct XML replacement
-    const replacements = new Map<string, string>();
-    for (const section of tailoredSections) {
-      if (section.tailoredText === section.originalText) continue;
+    const report: ExportReport = {
+      appliedEdits: result.applied.length,
+      droppedEdits: result.dropped,
+    };
 
-      for (const change of section.changes) {
-        if (change.original && change.replacement && change.original !== change.replacement) {
-          // Truncate replacement to original length to preserve line structure
-          const trimmed =
-            change.replacement.length > change.original.length
-              ? change.replacement.slice(0, change.original.length)
-              : change.replacement;
-          replacements.set(change.original, trimmed);
-        }
+    // Score the text as it exists in the rendered PDF — after every edit that
+    // was filtered for length or dropped to protect the layout. This is the
+    // only number that describes the file the user actually downloads.
+    if (jobDescription?.trim()) {
+      try {
+        const requirements = await extractRequirements(jobDescription);
+        const exportedText = result.final.lines.join("\n");
+        report.verifiedCoverage = scoreCoverage(
+          requirements,
+          sectionsFromPlainText(exportedText)
+        );
+      } catch (error) {
+        // A scoring failure must never cost the user their resume.
+        console.error("Verified coverage failed:", error);
       }
     }
 
-    // Assemble modified DOCX using direct string replacement on raw XML
-    const outputBuffer = await assembleDocx(archive, replacements);
-
-    // Convert DOCX to PDF using LibreOffice
-    const id = randomUUID();
-    const tempDocx = join(tmpdir(), `resume-${id}.docx`);
-    const tempPdf = join(tmpdir(), `resume-${id}.pdf`);
-    tempFiles.push(tempDocx, tempPdf);
-
-    writeFileSync(tempDocx, outputBuffer);
-
-    const soffice = "/Applications/LibreOffice.app/Contents/MacOS/soffice";
-    execSync(
-      `"${soffice}" --headless --convert-to pdf --outdir "${tmpdir()}" "${tempDocx}"`,
-      { timeout: 30000 }
-    );
-
-    if (!existsSync(tempPdf)) {
-      throw new Error("PDF conversion failed — output file not found");
-    }
-
-    const pdfBuffer = readFileSync(tempPdf);
-
-    return new NextResponse(pdfBuffer, {
-      headers: {
-        "Content-Type": "application/pdf",
-        "Content-Disposition": 'attachment; filename="tailored-resume.pdf"',
-      },
+    return NextResponse.json({
+      pdfBase64: result.pdfBuffer.toString("base64"),
+      report,
     });
   } catch (error) {
     console.error("Export error:", error);
@@ -79,13 +57,5 @@ export async function POST(request: NextRequest) {
       { error: "Failed to export tailored resume" },
       { status: 500 }
     );
-  } finally {
-    for (const f of tempFiles) {
-      try {
-        if (existsSync(f)) unlinkSync(f);
-      } catch {
-        // ignore cleanup errors
-      }
-    }
   }
 }

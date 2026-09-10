@@ -1,39 +1,49 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import ResumeUploader from "@/components/ResumeUploader";
 import JobDescriptionInput from "@/components/JobDescriptionInput";
 import TailorView from "@/components/TailorView";
-import { TailorResult } from "@/lib/docx/types";
-
-type UploadedResume = {
-  sections: { sectionName: string; fullText: string; runCount: number }[];
-  docxBase64: string;
-  fileName: string;
-};
+import { TailorResult, BaseResumeInfo } from "@/lib/docx/types";
+import type { ExportReport } from "@/lib/ats/types";
+import { buildExportFilename } from "@/lib/export/filename";
 
 type AppStep = "upload" | "tailoring" | "review";
 
-const FILLER_WORDS = new Set(["the", "a", "an", "of", "and", "&", "inc", "inc.", "llc", "co", "co.", "corp", "corp.", "ltd", "ltd.", "group", "holdings"]);
-
-function abbreviateCompany(name: string): string {
-  const words = name.split(/\s+/).filter((w) => !FILLER_WORDS.has(w.toLowerCase()));
-  if (words.length === 0) return name.slice(0, 3).toUpperCase();
-  if (words.length === 1) return words[0].slice(0, 3).toUpperCase();
-  // Take first letter of each significant word
-  return words.map((w) => w[0].toUpperCase()).join("");
-}
-
 export default function Home() {
   const [step, setStep] = useState<AppStep>("upload");
-  const [resume, setResume] = useState<UploadedResume | null>(null);
+  const [resume, setResume] = useState<BaseResumeInfo | null>(null);
   const [jobDescription, setJobDescription] = useState("");
   const [companyName, setCompanyName] = useState("");
   const [tailorResult, setTailorResult] = useState<TailorResult | null>(null);
   const [error, setError] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isLoadingBase, setIsLoadingBase] = useState(true);
+  const [exportReport, setExportReport] = useState<ExportReport | null>(null);
 
-  const handleUpload = (data: UploadedResume) => {
+  // Reload the saved base resume so it never has to be re-uploaded.
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const response = await fetch("/api/base-resume");
+        if (!response.ok) return;
+        const { baseResume } = await response.json();
+        if (!cancelled && baseResume) setResume(baseResume);
+      } catch {
+        // No saved resume is a normal first-run state, not an error.
+      } finally {
+        if (!cancelled) setIsLoadingBase(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleUpload = (data: BaseResumeInfo | null) => {
     setResume(data);
     setError("");
   };
@@ -44,8 +54,17 @@ export default function Home() {
       return;
     }
 
+    if (!resume.canRevise || !resume.docxBase64) {
+      setError(
+        resume.revisionBlockedReason ??
+          "This resume cannot be revised without altering its formatting."
+      );
+      return;
+    }
+
     setIsProcessing(true);
     setError("");
+    setExportReport(null);
     setStep("tailoring");
 
     try {
@@ -66,6 +85,12 @@ export default function Home() {
 
       const result: TailorResult = await response.json();
       setTailorResult(result);
+
+      // Show whatever the server settled on, so the company naming the export
+      // is visible and correctable rather than decided invisibly.
+      const detected = result.jobMeta?.company?.trim();
+      if (detected && !companyName.trim()) setCompanyName(detected);
+
       setStep("review");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
@@ -76,7 +101,7 @@ export default function Home() {
   };
 
   const handleExport = async (acceptedSections: TailorResult["sections"]) => {
-    if (!resume) return;
+    if (!resume?.docxBase64) return;
 
     try {
       const response = await fetch("/api/export", {
@@ -85,6 +110,8 @@ export default function Home() {
         body: JSON.stringify({
           docxBase64: resume.docxBase64,
           tailoredSections: acceptedSections,
+          // Lets the server score coverage against the exported text.
+          jobDescription,
         }),
       });
 
@@ -93,15 +120,20 @@ export default function Home() {
         throw new Error(err.error || "Failed to export resume");
       }
 
-      const blob = await response.blob();
+      const { pdfBase64, report } = (await response.json()) as {
+        pdfBase64: string;
+        report: ExportReport;
+      };
+      setExportReport(report);
+
+      const bytes = Uint8Array.from(atob(pdfBase64), (c) => c.charCodeAt(0));
+      const blob = new Blob([bytes], { type: "application/pdf" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      const baseName = resume.fileName.replace(/\.docx$/i, "");
-      const abbrev = companyName.trim()
-        ? abbreviateCompany(companyName.trim())
-        : "TL";
-      a.download = `${baseName} ${abbrev}.pdf`;
+      const resolvedCompany =
+        companyName.trim() || tailorResult?.jobMeta?.company || "";
+      a.download = buildExportFilename(resume.fileName, resolvedCompany);
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -111,12 +143,14 @@ export default function Home() {
     }
   };
 
+  // Clears the job, not the resume — the saved base resume persists across
+  // applications and is removed explicitly from the uploader.
   const handleStartOver = () => {
     setStep("upload");
-    setResume(null);
     setJobDescription("");
     setCompanyName("");
     setTailorResult(null);
+    setExportReport(null);
     setError("");
   };
 
@@ -160,10 +194,15 @@ export default function Home() {
               <div>
                 <h2 className="text-lg font-semibold mb-1">Your Resume</h2>
                 <p className="text-sm text-muted">
-                  Upload your base resume in .docx format
+                  Saved and reloaded automatically. .docx keeps your formatting
+                  intact through tailoring.
                 </p>
               </div>
-              <ResumeUploader onUpload={handleUpload} uploadedResume={resume} />
+              <ResumeUploader
+                onUpload={handleUpload}
+                uploadedResume={resume}
+                isLoading={isLoadingBase}
+              />
             </div>
 
             {/* Right: Job Description */}
@@ -186,7 +225,9 @@ export default function Home() {
             <div className="lg:col-span-2 flex justify-center pt-4">
               <button
                 onClick={handleTailor}
-                disabled={!resume || !jobDescription.trim() || isProcessing}
+                disabled={
+                  !resume?.canRevise || !jobDescription.trim() || isProcessing
+                }
                 className="px-8 py-3 bg-primary text-white rounded-lg font-medium
                   hover:bg-primary-hover disabled:opacity-40 disabled:cursor-not-allowed
                   transition-colors text-lg"
@@ -212,6 +253,7 @@ export default function Home() {
         {step === "review" && tailorResult && (
           <TailorView
             result={tailorResult}
+            exportReport={exportReport}
             onExport={handleExport}
             onStartOver={handleStartOver}
           />
