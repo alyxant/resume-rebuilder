@@ -27,9 +27,18 @@ export default function Home() {
 
     (async () => {
       try {
-        const response = await fetch("/api/base-resume");
+        // Most visits use a tiny persisted summary, keeping the heavy DOCX/PDF
+        // parsers out of the page's cold-start request. Older saved resumes are
+        // analyzed once and cached automatically.
+        let response = await fetch("/api/base-resume/saved");
         if (!response.ok) return;
-        const { baseResume } = await response.json();
+        const saved = await response.json();
+        let { baseResume } = saved;
+        if (saved.needsAnalysis) {
+          response = await fetch("/api/base-resume");
+          if (!response.ok) return;
+          ({ baseResume } = await response.json());
+        }
         if (!cancelled && baseResume) setResume(baseResume);
       } catch {
         // No saved resume is a normal first-run state, not an error.

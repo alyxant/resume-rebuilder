@@ -15,6 +15,8 @@ import {
   saveBaseResume,
   clearBaseResume,
   canRevise,
+  loadBaseResumeSummary,
+  saveBaseResumeSummary,
   BaseResumeFormat,
   BaseResumeMeta,
 } from "@/lib/base-resume/store";
@@ -86,9 +88,14 @@ export async function GET() {
   const stored = loadBaseResume();
   if (!stored) return NextResponse.json({ baseResume: null });
 
+  const cached = loadBaseResumeSummary();
+  if (cached) return NextResponse.json({ baseResume: cached });
+
   try {
+    const baseResume = await describe(stored.meta, stored.buffer);
+    saveBaseResumeSummary(baseResume);
     return NextResponse.json({
-      baseResume: await describe(stored.meta, stored.buffer),
+      baseResume,
     });
   } catch (error) {
     console.error("Base resume read error:", error);
@@ -144,7 +151,9 @@ export async function POST(request: NextRequest) {
     await readSections(buffer, format);
 
     const meta = saveBaseResume(buffer, { fileName, format, sourcePath });
-    return NextResponse.json({ baseResume: await describe(meta, buffer) });
+    const baseResume = await describe(meta, buffer);
+    saveBaseResumeSummary(baseResume);
+    return NextResponse.json({ baseResume });
   } catch (error) {
     console.error("Base resume save error:", error);
     return NextResponse.json(

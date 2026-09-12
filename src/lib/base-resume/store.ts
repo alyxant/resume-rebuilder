@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync } from "fs";
 import { join } from "path";
+import type { BaseResumeInfo } from "@/lib/docx/types";
 
 export type BaseResumeFormat = "docx" | "pdf";
 
@@ -18,6 +19,7 @@ export type BaseResume = {
 
 const STORE_DIR = join(process.cwd(), ".base-resume");
 const META_PATH = join(STORE_DIR, "meta.json");
+const SUMMARY_PATH = join(STORE_DIR, "summary.json");
 
 function filePath(format: BaseResumeFormat): string {
   return join(STORE_DIR, `resume.${format}`);
@@ -48,11 +50,27 @@ export function loadBaseResume(): BaseResume | null {
   }
 }
 
+export function loadBaseResumeSummary(): BaseResumeInfo | null {
+  if (!existsSync(SUMMARY_PATH)) return null;
+
+  try {
+    return JSON.parse(readFileSync(SUMMARY_PATH, "utf8")) as BaseResumeInfo;
+  } catch {
+    return null;
+  }
+}
+
+export function saveBaseResumeSummary(summary: BaseResumeInfo): void {
+  mkdirSync(STORE_DIR, { recursive: true });
+  writeFileSync(SUMMARY_PATH, JSON.stringify(summary));
+}
+
 export function saveBaseResume(
   buffer: Buffer,
   meta: Omit<BaseResumeMeta, "savedAt">
 ): BaseResumeMeta {
   mkdirSync(STORE_DIR, { recursive: true });
+  if (existsSync(SUMMARY_PATH)) rmSync(SUMMARY_PATH);
 
   // Clear any previously saved resume in the other format so the store never
   // holds two candidates.
