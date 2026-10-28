@@ -20,6 +20,7 @@ import {
   BaseResumeFormat,
   BaseResumeMeta,
 } from "@/lib/base-resume/store";
+import { rejectUnauthorized } from "@/lib/auth/api";
 
 function formatOf(fileName: string): BaseResumeFormat | null {
   if (/\.docx$/i.test(fileName)) return "docx";
@@ -84,7 +85,10 @@ async function describe(meta: BaseResumeMeta, buffer: Buffer) {
   };
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const unauthorized = rejectUnauthorized(request);
+  if (unauthorized) return unauthorized;
+
   const stored = loadBaseResume();
   if (!stored) return NextResponse.json({ baseResume: null });
 
@@ -107,6 +111,9 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
+  const unauthorized = rejectUnauthorized(request);
+  if (unauthorized) return unauthorized;
+
   try {
     const contentType = request.headers.get("content-type") ?? "";
     let buffer: Buffer;
@@ -163,7 +170,10 @@ export async function POST(request: NextRequest) {
   }
 }
 
-export async function DELETE() {
+export async function DELETE(request: NextRequest) {
+  const unauthorized = rejectUnauthorized(request);
+  if (unauthorized) return unauthorized;
+
   clearBaseResume();
   return NextResponse.json({ baseResume: null });
 }

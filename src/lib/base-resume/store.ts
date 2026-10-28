@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync } from "fs";
 import { join } from "path";
 import type { BaseResumeInfo } from "@/lib/docx/types";
+import { dataPath } from "@/lib/storage/paths";
 
 export type BaseResumeFormat = "docx" | "pdf";
 
@@ -17,7 +18,7 @@ export type BaseResume = {
   buffer: Buffer;
 };
 
-const STORE_DIR = join(process.cwd(), ".base-resume");
+const STORE_DIR = dataPath(".base-resume");
 const META_PATH = join(STORE_DIR, "meta.json");
 const SUMMARY_PATH = join(STORE_DIR, "summary.json");
 

@@ -7,6 +7,7 @@ import { getProvider } from "@/lib/ai/provider";
 import { extractCompany } from "@/lib/ats/company";
 import { scoreCoverage } from "@/lib/ats/coverage";
 import type { TextSection } from "@/lib/docx/types";
+import { rejectUnauthorized } from "@/lib/auth/api";
 
 /** Apply a section's tailored text so coverage can be scored on the result. */
 function projectTailored(
@@ -21,6 +22,9 @@ function projectTailored(
 }
 
 export async function POST(request: NextRequest) {
+  const unauthorized = rejectUnauthorized(request);
+  if (unauthorized) return unauthorized;
+
   try {
     const body = await request.json();
     const { docxBase64, jobDescription, companyName } = body;

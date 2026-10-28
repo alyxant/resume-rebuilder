@@ -52,3 +52,33 @@ npm start
 ```
 
 Production mode serves the app at [http://localhost:3000](http://localhost:3000) after a successful build.
+
+## Private Railway deployment
+
+The included `Dockerfile` installs LibreOffice for PDF export. Production also
+requires a shared password; the Gemini key remains server-side and is never
+sent to the browser.
+
+1. Push this project to a private GitHub repository.
+2. In Railway, create a project with **Deploy from GitHub repo** and select it.
+3. Add these service variables:
+
+   ```dotenv
+   AI_PROVIDER=gemini
+   GEMINI_API_KEY=your-real-key
+   APP_PASSWORD=a-long-random-password-to-share-with-your-friend
+   DATA_DIR=/data
+   AI_TIMEOUT_MS=180000
+   ```
+
+4. Seal `GEMINI_API_KEY` in Railway after saving it.
+5. Add a persistent volume mounted at `/data`. This keeps the saved base
+   resume and ATS cache across deployments.
+6. In **Settings > Networking**, generate a public domain.
+
+Do not commit `.env.local` or paste the Gemini key into the Dockerfile. The
+production app fails closed when `APP_PASSWORD` is missing. Login attempts are
+limited per client, and uploaded resumes are limited to 10 MB.
+
+This deployment has one shared base-resume slot. Uploading a new base resume
+replaces the previous one for everyone using the deployment.

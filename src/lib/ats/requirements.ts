@@ -5,6 +5,7 @@ import { getProvider } from "../ai/provider";
 import { parseJsonResponse } from "../ai/json";
 import { normalize } from "./coverage";
 import type { Requirement } from "./types";
+import { dataPath } from "@/lib/storage/paths";
 
 /**
  * Turn a job description into a typed requirement list.
@@ -16,7 +17,7 @@ import type { Requirement } from "./types";
  * failure direction is safe.
  */
 
-const CACHE_DIR = join(process.cwd(), ".ats-cache");
+const CACHE_DIR = dataPath(".ats-cache");
 
 /**
  * Bump whenever EXTRACTION_PROMPT changes materially — it is part of the cache

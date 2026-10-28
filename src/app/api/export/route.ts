@@ -5,8 +5,12 @@ import { extractRequirements } from "@/lib/ats/requirements";
 import { scoreCoverage } from "@/lib/ats/coverage";
 import type { TailoredSection } from "@/lib/docx/types";
 import type { ExportReport } from "@/lib/ats/types";
+import { rejectUnauthorized } from "@/lib/auth/api";
 
 export async function POST(request: NextRequest) {
+  const unauthorized = rejectUnauthorized(request);
+  if (unauthorized) return unauthorized;
+
   try {
     const body = await request.json();
     const { docxBase64, tailoredSections, jobDescription } = body as {

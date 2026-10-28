@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { rejectUnauthorized } from "@/lib/auth/api";
 
 /**
  * Fetch a job posting and recover its text.
@@ -114,6 +115,9 @@ function extractJsonLd(html: string): JobPosting | null {
 }
 
 export async function POST(request: NextRequest) {
+  const unauthorized = rejectUnauthorized(request);
+  if (unauthorized) return unauthorized;
+
   try {
     const body = await request.json();
     const { url } = body;

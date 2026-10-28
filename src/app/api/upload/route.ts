@@ -1,14 +1,27 @@
 import { NextRequest, NextResponse } from "next/server";
 import { parseDocx } from "@/lib/docx/parser";
 import { extractTextRuns, groupRunsIntoSections } from "@/lib/docx/text-extractor";
+import { rejectUnauthorized } from "@/lib/auth/api";
+
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 
 export async function POST(request: NextRequest) {
+  const unauthorized = rejectUnauthorized(request);
+  if (unauthorized) return unauthorized;
+
   try {
     const formData = await request.formData();
     const file = formData.get("resume") as File | null;
 
     if (!file) {
       return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
+    }
+
+    if (file.size > MAX_UPLOAD_BYTES) {
+      return NextResponse.json(
+        { error: "Resume must be 10 MB or smaller" },
+        { status: 413 }
+      );
     }
 
     if (
