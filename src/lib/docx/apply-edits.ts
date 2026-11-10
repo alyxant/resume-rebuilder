@@ -44,23 +44,17 @@ function collectReplacements(
   return replacements;
 }
 
-/** Longest first — the biggest growth is the likeliest cause of a wrap. */
-function byGrowthDescending(
-  replacements: Map<string, string>
-): [string, string][] {
-  return [...replacements.entries()].sort(
-    (a, b) => b[1].length - b[0].length - (a[1].length - a[0].length)
-  );
-}
-
 /**
  * Apply accepted edits and render, guaranteeing the page layout is unchanged.
  *
- * The original is rendered first to establish a baseline, then each candidate
- * is rendered and compared. If anything wrapped onto a new line or spilled to a
- * new page, the largest remaining edit is dropped and the process repeats — a
- * slightly less-tailored resume beats one whose formatting broke. Because each
- * pass removes one edit, the untouched original is always reachable.
+ * The original is rendered first to establish a template-specific baseline.
+ * Candidate edits are then added one at a time. This matters: comparing only
+ * the final document's total line count can miss one bullet wrapping when a
+ * different edit happens to remove a line. Per-edit rendering prevents those
+ * changes from cancelling each other out.
+ *
+ * No assumptions are made about fonts, margins, tables, bullet glyphs, or
+ * section names. The actual rendered PDF is the authority for every template.
  */
 export async function applyEditsLayoutSafe(
   sourceBuffer: Buffer,
@@ -68,40 +62,58 @@ export async function applyEditsLayoutSafe(
 ): Promise<AppliedEdits> {
   const baseline = await measureLayout(renderPdf(sourceBuffer));
 
-  const replacements = collectReplacements(tailoredSections);
-  const dropped: string[] = [];
-  const maxAttempts = replacements.size + 1;
-
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const archive = await parseDocx(sourceBuffer);
-    const docxBuffer = await assembleDocx(archive, replacements);
-    const pdfBuffer = renderPdf(docxBuffer);
-    const final = await measureLayout(pdfBuffer);
-
-    // With no edits left to test, the untouched original is trivially safe.
-    const regression =
-      replacements.size === 0 ? null : findRegression(baseline, final);
-
-    if (!regression) {
-      return {
-        docxBuffer,
-        pdfBuffer,
-        applied: [...replacements.keys()],
-        dropped,
-        baseline,
-        final,
-        regression: null,
-      };
-    }
-
-    const [worst] = byGrowthDescending(replacements);
-    console.warn(
-      `[export] ${regression.kind} (${regression.before} → ${regression.after}); ` +
-        `dropping edit: "${worst[1].slice(0, 60)}..."`
+  if (baseline.pageCount !== 1) {
+    throw new Error(
+      `The source resume renders as ${baseline.pageCount} pages. ` +
+        "Use a one-page DOCX before tailoring so the exporter can preserve that limit."
     );
-    replacements.delete(worst[0]);
-    dropped.push(worst[0]);
   }
 
-  throw new Error("Could not produce a layout-safe resume");
+  const proposed = collectReplacements(tailoredSections);
+  const accepted = new Map<string, string>();
+  const dropped: string[] = [];
+  let final = baseline;
+  let docxBuffer = sourceBuffer;
+  let pdfBuffer = renderPdf(sourceBuffer);
+
+  for (const [original, replacement] of proposed) {
+    // A model-generated newline is never allowed to create a second visual
+    // line inside an edited bullet or skills row.
+    if (/[\r\n\v\f]/.test(replacement)) {
+      dropped.push(original);
+      continue;
+    }
+
+    const candidate = new Map(accepted);
+    candidate.set(original, replacement);
+    const archive = await parseDocx(sourceBuffer);
+    const candidateDocx = await assembleDocx(archive, candidate);
+    const candidatePdf = renderPdf(candidateDocx);
+    const candidateLayout = await measureLayout(candidatePdf);
+    const regression = findRegression(final, candidateLayout, replacement);
+
+    if (regression) {
+      console.warn(
+        `[export] ${regression.kind} (${regression.before} → ${regression.after}); ` +
+          `dropping edit: "${replacement.slice(0, 60)}..."`
+      );
+      dropped.push(original);
+      continue;
+    }
+
+    accepted.set(original, replacement);
+    docxBuffer = candidateDocx;
+    pdfBuffer = candidatePdf;
+    final = candidateLayout;
+  }
+
+  return {
+    docxBuffer,
+    pdfBuffer,
+    applied: [...accepted.keys()],
+    dropped,
+    baseline,
+    final,
+    regression: null,
+  };
 }

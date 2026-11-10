@@ -57,8 +57,12 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     console.error("Export error:", error);
+    const message =
+      error instanceof Error && error.message.startsWith("The source resume renders as")
+        ? error.message
+        : "Failed to export tailored resume";
     return NextResponse.json(
-      { error: "Failed to export tailored resume" },
+      { error: message },
       { status: 500 }
     );
   }

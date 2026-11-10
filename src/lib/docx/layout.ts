@@ -96,10 +96,32 @@ export async function measureDocx(docxBuffer: Buffer): Promise<Layout> {
 }
 
 export type LayoutRegression = {
-  kind: "page-growth" | "line-growth";
+  kind: "page-limit" | "page-growth" | "line-growth" | "replacement-wrap";
   before: number;
   after: number;
 };
+
+function normalizeRenderedText(text: string): string {
+  return text.normalize("NFKC").replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Confirm that an edited paragraph's complete text occurs on one rendered
+ * visual line. This deliberately inspects PDF output instead of guessing from
+ * character counts, fonts, margins, tables, or Word list settings, so it works
+ * with any DOCX template LibreOffice can render.
+ */
+export function isTextOnSingleRenderedLine(
+  layout: Layout,
+  text: string
+): boolean {
+  const target = normalizeRenderedText(text);
+  if (!target) return false;
+
+  return layout.lines.some((line) =>
+    normalizeRenderedText(line).includes(target)
+  );
+}
 
 /**
  * Compare a tailored layout against the original. Any growth in page count or
@@ -108,8 +130,18 @@ export type LayoutRegression = {
  */
 export function findRegression(
   before: Layout,
-  after: Layout
+  after: Layout,
+  replacement?: string
 ): LayoutRegression | null {
+  // The product promise is absolute, not relative: a two-page source cannot
+  // make a two-page tailored export acceptable merely because it stayed at two.
+  if (after.pageCount > 1) {
+    return {
+      kind: "page-limit",
+      before: 1,
+      after: after.pageCount,
+    };
+  }
   if (after.pageCount > before.pageCount) {
     return {
       kind: "page-growth",
@@ -122,6 +154,13 @@ export function findRegression(
       kind: "line-growth",
       before: before.lines.length,
       after: after.lines.length,
+    };
+  }
+  if (replacement && !isTextOnSingleRenderedLine(after, replacement)) {
+    return {
+      kind: "replacement-wrap",
+      before: 1,
+      after: 2,
     };
   }
   return null;
